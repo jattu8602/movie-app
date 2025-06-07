@@ -1,52 +1,103 @@
 import { Client, Databases, ID, Query } from 'appwrite'
+import { config, validateConfig } from './utils/config.js'
 
-const PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID;
-const DATABASE_ID = import.meta.env.VITE_APPWRITE_DATABASE_ID;
-const COLLECTION_ID = import.meta.env.VITE_APPWRITE_COLLECTION_ID;
+// Validate configuration on import
+const configValidation = validateConfig()
+if (!configValidation.isValid) {
+  console.warn(
+    'Appwrite configuration issues detected:',
+    configValidation.errors
+  )
+}
 
 const client = new Client()
-  .setEndpoint('https://fra.cloud.appwrite.io/v1')
-  .setProject(PROJECT_ID)
+  .setEndpoint(config.appwrite.endpoint)
+  .setProject(config.appwrite.projectId)
 
-const database = new Databases(client);
+const database = new Databases(client)
 
 export const updateSearchCount = async (searchTerm, movie) => {
-  // 1. Use Appwrite SDK to check if the search term exists in the database
- try {
-  const result = await database.listDocuments(DATABASE_ID, COLLECTION_ID, [
-    Query.equal('searchTerm', searchTerm),
-  ])
-
-  // 2. If it does, update the count
-  if(result.documents.length > 0) {
-   const doc = result.documents[0];
-
-   await database.updateDocument(DATABASE_ID, COLLECTION_ID, doc.$id, {
-    count: doc.count + 1,
-   })
-  // 3. If it doesn't, create a new document with the search term and count as 1
-  } else {
-   await database.createDocument(DATABASE_ID, COLLECTION_ID, ID.unique(), {
-    searchTerm,
-    count: 1,
-    movie_id: movie.id,
-    poster_url: `https://image.tmdb.org/t/p/w500${movie.poster_path}`,
-   })
+  // Early return if configuration is invalid
+  if (
+    !config.appwrite.projectId ||
+    !config.appwrite.databaseId ||
+    !config.appwrite.collectionId
+  ) {
+    console.warn(
+      'Appwrite not properly configured, skipping search count update'
+    )
+    return
   }
- } catch (error) {
-  console.error(error);
- }
+
+  try {
+    const result = await database.listDocuments(
+      config.appwrite.databaseId,
+      config.appwrite.collectionId,
+      [Query.equal('searchTerm', searchTerm)]
+    )
+
+    // If search term exists, update the count
+    if (result.documents.length > 0) {
+      const doc = result.documents[0]
+      await database.updateDocument(
+        config.appwrite.databaseId,
+        config.appwrite.collectionId,
+        doc.$id,
+        {
+          count: doc.count + 1,
+          lastSearched: new Date().toISOString(),
+        }
+      )
+    } else {
+      // Create new document with search term
+      await database.createDocument(
+        config.appwrite.databaseId,
+        config.appwrite.collectionId,
+        ID.unique(),
+        {
+          searchTerm,
+          count: 1,
+          movie_id: movie.id,
+          title: movie.title,
+          poster_url: movie.poster_path
+            ? `${config.tmdb.imageBaseUrl}${movie.poster_path}`
+            : null,
+          rating: movie.vote_average || 0,
+          release_date: movie.release_date || null,
+          created: new Date().toISOString(),
+          lastSearched: new Date().toISOString(),
+        }
+      )
+    }
+  } catch (error) {
+    console.error('Error updating search count:', error)
+    // Don't throw the error to prevent breaking the search functionality
+  }
 }
 
 export const getTrendingMovies = async () => {
- try {
-  const result = await database.listDocuments(DATABASE_ID, COLLECTION_ID, [
-    Query.limit(5),
-    Query.orderDesc("count")
-  ])
+  // Early return if configuration is invalid
+  if (
+    !config.appwrite.projectId ||
+    !config.appwrite.databaseId ||
+    !config.appwrite.collectionId
+  ) {
+    console.warn(
+      'Appwrite not properly configured, returning empty trending movies'
+    )
+    return []
+  }
 
-  return result.documents;
- } catch (error) {
-  console.error(error);
- }
+  try {
+    const result = await database.listDocuments(
+      config.appwrite.databaseId,
+      config.appwrite.collectionId,
+      [Query.limit(5), Query.orderDesc('count'), Query.isNotNull('poster_url')]
+    )
+
+    return result.documents || []
+  } catch (error) {
+    console.error('Error fetching trending movies:', error)
+    return []
+  }
 }
