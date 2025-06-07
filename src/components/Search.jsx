@@ -8,6 +8,8 @@ const Search = ({ searchTerm, setSearchTerm, onClear }) => {
     }
   }
 
+
+  
   return (
     <div className="search">
       <div>
